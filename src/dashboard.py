@@ -50,15 +50,37 @@ PALETTE = {
 # ==============================================================
 # Chargement des donnees (reprend la logique de exploratory_analysis.py)
 # ==============================================================
-@st.cache_data
-def load_data() -> pd.DataFrame:
-    if not DATA_PATH.exists():
-        st.error(
-            f"Fichier introuvable : {DATA_PATH}\n\n"
-            "Lancez d'abord `preprocessing.py` pour generer merged_data.csv."
-        )
+def ensure_data_available():
+    """Sur Streamlit Cloud, data/processed/ est exclu du repo (.gitignore, donnees
+    patients sensibles). Si le fichier est absent, on propose un import manuel
+    (session uniquement, jamais commite/persiste)."""
+    if DATA_PATH.exists():
+        return
+
+    st.title("🧠 Tableau de bord clinique — Analyse psychiatrique")
+    st.warning(
+        "Fichier de données introuvable sur ce serveur "
+        "(`data/processed/merged_data.csv` est volontairement exclu du dépôt Git "
+        "car il contient des données patients).\n\n"
+        "Importez le fichier `merged_data.csv` pour utiliser le tableau de bord. "
+        "Il n'est ni sauvegardé de façon permanente, ni commité — seulement chargé "
+        "en mémoire pour cette session."
+    )
+    uploaded = st.file_uploader("Importer merged_data.csv", type="csv")
+    if uploaded is None:
         st.stop()
 
+    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(DATA_PATH, "wb") as f:
+        f.write(uploaded.getbuffer())
+    st.rerun()
+
+
+ensure_data_available()
+
+
+@st.cache_data
+def load_data() -> pd.DataFrame:
     df = pd.read_csv(DATA_PATH, encoding="utf-8")
 
     df["diag_cat"] = df["diagnostic_principal"].map(DIAG_MAP).fillna("Autre")
@@ -392,7 +414,7 @@ elif page == "Questions de recherche":
 elif page == "Modèle de profilage génératif":
     st.title("Modèle de profilage génératif")
     st.caption(
-        "Modèle Naive Bayes conditionné sur la catégorie diagnostique — voir `profiling_model.py`. "
+        "Modèle Naive Bayes conditionné sur la catégorie diagnostique. "
         "Entraîné sur l'ensemble des 3 catégories cibles, indépendamment du filtre global."
     )
 
