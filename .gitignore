@@ -1,0 +1,24 @@
+# ============================================================
+# Patient / clinical data — NEVER commit, even anonymized
+# ============================================================
+data/raw/
+data/cleaned/
+data/processed/
+*.csv
+
+
+# Trained model artifacts (derived from patient data)
+models/
+*.json
+!package.json
+!package-lock.json
+
+reports/figures/*.png
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+
+.streamlit/
+.vscode/
