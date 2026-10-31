@@ -34,25 +34,14 @@ df = load_data()
 # 0. Préparation : création de colonnes supplémentaires
 # ------------------------------------------------------------
 
-# Créer une catégorie diagnostique simplifiée
-diag_map = {
-    'Schizophrénie': 'Psychotique',
-    'Trouble Schizo-Affectif': 'Psychotique',
-    'Trouble Psychotique Aigu Et Transitoire': 'Psychotique',
-    'Trouble Bipolaire Type I': 'Bipolaire',
-    'Trouble Bipolaire Type Ii': 'Bipolaire',
-    'Cyclothymie': 'Bipolaire',
-    'Trouble Dépressif Caractérisé': 'Anxio-Dépressif',
-    'Trouble Dépressif Récurrent': 'Anxio-Dépressif',
-    'Trouble Dépressif Persistant': 'Anxio-Dépressif',
-    'Trouble Anxieux Généralisé': 'Anxio-Dépressif',
-    'Trouble Panique': 'Anxio-Dépressif',
-    'Phobie Sociale': 'Anxio-Dépressif',
-    'Trouble Obsessionnel-Compulsif (Toc)': 'Anxio-Dépressif',
-    'État De Stress Post-Traumatique (Tspt)': 'Anxio-Dépressif',
-    'Trouble De L\'Adaptation': 'Anxio-Dépressif',
-}
-df['diag_cat'] = df['diagnostic_principal'].map(diag_map).fillna('Autre')
+# ------------------------------------------------------------
+# Mapping diagnostique -> categorie clinique (7 categories + "Autre")
+# La logique (listes de diagnostics, regles de priorite des diagnostics composites)
+# vit dans diagnostic_mapping.py : source unique partagee avec les modeles et le dashboard.
+# ------------------------------------------------------------
+from diagnostic_mapping import DIAG_ORDER, map_eda as map_diagnostic_category
+
+df['diag_cat'] = df['diagnostic_principal'].apply(map_diagnostic_category)
 
 # Créer colonne de risque élevé (suicidalité)
 df['high_risk'] = df['niveau_suicidalite'].isin(['Idees_Suicidaires_Actives', 'Tentative_Ou_Automutilation'])
@@ -98,12 +87,14 @@ def plot_education():
     print("✅ Graphique 'education_pie.png' généré")
 
 def plot_redoublements_by_diagnosis():
-    mean_redoub = df.groupby('diag_cat')['nombre_redoublements'].mean().sort_values(ascending=False)
+    mean_redoub = df.groupby('diag_cat')['nombre_redoublements'].mean()
+    mean_redoub = mean_redoub.reindex([c for c in DIAG_ORDER if c in mean_redoub.index])
     plt.figure()
     mean_redoub.plot(kind='bar', color='skyblue')
     plt.title("Nombre moyen de redoublements par catégorie diagnostique")
     plt.ylabel("Moyenne des redoublements")
     plt.xlabel("Catégorie diagnostique")
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/redoublements_by_diag.png", dpi=150)
     plt.close()
@@ -118,6 +109,24 @@ def plot_socioeco():
     plt.savefig(f"{OUTPUT_DIR}/socioeco_pie.png", dpi=150)
     plt.close()
     print("✅ Graphique 'socioeco_pie.png' généré")
+
+def plot_education_by_category():
+    """NOUVEAU : repartition du niveau scolaire au sein de chaque categorie
+    diagnostique (barres empilees en %), pour voir si un profil scolaire
+    particulier est associe a une categorie clinique donnee."""
+    ct = pd.crosstab(df['diag_cat'], df['niveau_scolaire'], normalize='index') * 100
+    ct = ct.reindex([c for c in DIAG_ORDER if c in ct.index])
+    plt.figure()
+    ct.plot(kind='bar', stacked=True, colormap='tab20', ax=plt.gca())
+    plt.title("Répartition du niveau scolaire par catégorie diagnostique")
+    plt.ylabel("% de patients")
+    plt.xlabel("Catégorie diagnostique")
+    plt.xticks(rotation=45, ha='right')
+    plt.legend(title="Niveau scolaire", bbox_to_anchor=(1.02, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_DIR}/education_by_category.png", dpi=150)
+    plt.close()
+    print("✅ Graphique 'education_by_category.png' généré")
 
 # ------------------------------------------------------------
 # 2. INDICATEURS DE RISQUE
@@ -160,12 +169,14 @@ def plot_risk_factors():
     print("✅ Graphique 'risk_factors.png' généré")
 
 def plot_hospitalizations():
-    hosp_mean = df.groupby('diag_cat')['nb_hospitalisations_int'].mean().sort_values(ascending=False)
+    hosp_mean = df.groupby('diag_cat')['nb_hospitalisations_int'].mean()
+    hosp_mean = hosp_mean.reindex([c for c in DIAG_ORDER if c in hosp_mean.index])
     plt.figure()
     hosp_mean.plot(kind='bar', color='lightgreen')
     plt.title("Nombre moyen d'hospitalisations par catégorie diagnostique")
     plt.ylabel("Moyenne d'hospitalisations")
     plt.xlabel("Catégorie diagnostique")
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/hospitalizations_by_diag.png", dpi=150)
     plt.close()
@@ -197,6 +208,25 @@ def plot_substance_use():
     plt.savefig(f"{OUTPUT_DIR}/substance_pie.png", dpi=150)
     plt.close()
     print("✅ Graphique 'substance_pie.png' généré")
+
+def plot_suicidality_by_category():
+    """NOUVEAU : repartition du niveau de suicidalite au sein de chaque
+    categorie diagnostique (barres empilees en %)."""
+    order_suic = ['Aucune_Ideation', 'Idees_Mort_Passives', 'Idees_Suicidaires_Actives', 'Tentative_Ou_Automutilation']
+    ct = pd.crosstab(df['diag_cat'], df['niveau_suicidalite'], normalize='index') * 100
+    ct = ct.reindex(columns=order_suic, fill_value=0)
+    ct = ct.reindex([c for c in DIAG_ORDER if c in ct.index])
+    plt.figure()
+    ct.plot(kind='bar', stacked=True, colormap='RdYlGn_r', ax=plt.gca())
+    plt.title("Niveau de suicidalité par catégorie diagnostique")
+    plt.ylabel("% de patients")
+    plt.xlabel("Catégorie diagnostique")
+    plt.xticks(rotation=45, ha='right')
+    plt.legend(title="Niveau de suicidalité", bbox_to_anchor=(1.02, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_DIR}/suicidality_by_category.png", dpi=150)
+    plt.close()
+    print("✅ Graphique 'suicidality_by_category.png' généré")
 
 # ------------------------------------------------------------
 # 3. SUIVI THÉRAPEUTIQUE
@@ -273,12 +303,32 @@ def plot_relapse_by_trauma():
     plt.close()
     print("✅ Graphique 'relapse_by_trauma.png' généré")
 
+def plot_school_relapse_by_category():
+    """NOUVEAU : taux de rechute scolaire pour chaque categorie diagnostique."""
+    valid = df.dropna(subset=['diag_cat', 'rechute_scolaire_recente'])
+    relapse_rate = valid.groupby('diag_cat')['rechute_scolaire_recente'].apply(lambda x: (x == 'Oui').mean() * 100)
+    relapse_rate = relapse_rate.reindex([c for c in DIAG_ORDER if c in relapse_rate.index], fill_value=0)
+    plt.figure()
+    relapse_rate.plot(kind='bar', color='mediumpurple')
+    plt.title("Taux de rechute scolaire par catégorie diagnostique")
+    plt.ylabel("% de rechute scolaire")
+    plt.xlabel("Catégorie diagnostique")
+    plt.ylim(0, 100)
+    for i, v in enumerate(relapse_rate.values):
+        plt.text(i, v+2, f"{v:.0f}%", ha='center')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_DIR}/school_relapse_by_category.png", dpi=150)
+    plt.close()
+    print("✅ Graphique 'school_relapse_by_category.png' généré")
+
 # ------------------------------------------------------------
 # 4. SYNTHÈSE PAR PROFIL DE PATIENT
 # ------------------------------------------------------------
 
 def plot_profiles():
     profile_counts = df['diag_cat'].value_counts()
+    profile_counts = profile_counts.reindex([c for c in DIAG_ORDER if c in profile_counts.index])
     plt.figure()
     plt.pie(profile_counts, labels=profile_counts.index, autopct='%1.0f%%', startangle=90)
     plt.title("Répartition des profils symptomatiques")
@@ -295,6 +345,7 @@ def plot_profiles():
         'type_traumatisme_emotionnel': lambda x: (x.notna() & (x != 'Aucun')).mean()
     }).round(2)
     profile_stats.columns = ['Âge moyen', 'Hospitalisations moyennes', '% Risque élevé', '% Traumatismes']
+    profile_stats = profile_stats.reindex([c for c in DIAG_ORDER if c in profile_stats.index])
     profile_stats.to_csv(f"{OUTPUT_DIR}/profile_stats.csv")
     print("✅ Tableau des profils sauvegardé dans 'profile_stats.csv'")
 
@@ -350,11 +401,13 @@ def plot_suicide_predictors():
     print("✅ Graphique 'suicide_predictors.png' généré")
 
 def plot_hosp_by_profile():
-    hosp_rate = df.groupby('diag_cat')['nb_hospitalisations_int'].mean().sort_values(ascending=False)
+    hosp_rate = df.groupby('diag_cat')['nb_hospitalisations_int'].mean()
+    hosp_rate = hosp_rate.reindex([c for c in DIAG_ORDER if c in hosp_rate.index])
     plt.figure()
     hosp_rate.plot(kind='bar', color='teal')
     plt.title("Nombre moyen d'hospitalisations par profil symptomatique")
     plt.ylabel("Moyenne d'hospitalisations")
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/hosp_by_profile.png", dpi=150)
     plt.close()
@@ -393,15 +446,18 @@ def run_all():
     plot_education()
     plot_redoublements_by_diagnosis()
     plot_socioeco()
+    plot_education_by_category()          # NOUVEAU
     plot_suicidality()
     plot_risk_factors()
     plot_hospitalizations()
     plot_substance_use()
+    plot_suicidality_by_category()         # NOUVEAU
     plot_clinical_evolution()
     plot_observance()
     plot_observance_impact()
     plot_tolerance()
     plot_relapse_by_trauma()
+    plot_school_relapse_by_category()      # NOUVEAU
     plot_profiles()
     plot_trauma_school_relapse()
     plot_suicide_predictors()
