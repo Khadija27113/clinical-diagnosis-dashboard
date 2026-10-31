@@ -1,40 +1,21 @@
 """
 profiling_model.py
-Modele generatif de profils patients par categorie diagnostique.
+PROFIL TYPE d'une categorie diagnostique : etant donnee une categorie, quel patient est le plus representatif ?
 
 A partir de merged_data.csv (sortie de preprocessing.py), ce script :
-  1. Regroupe diagnostic_principal en 3 categories simplifiees
-     (Psychotique, Bipolaire, Anxio-Depressif), comme dans exploratory_analysis.py
-  2. Apprend, pour chaque categorie, la distribution conditionnelle de :
-       - l'age (age d'apparition des 1ers symptomes, age 1ere consultation)
-       - le sexe
-       - le niveau scolaire
-       - 13 symptomes/syndromes binaires (Oui/Non)
-  3. Permet de generer ("echantillonner") un ou plusieurs profils patients
-     synthetiques plausibles pour une categorie donnee.
+  1. Regroupe diagnostic_principal en 7 categories cliniques + "Autre" (diagnostic_mapping.map_eda).
+  2. Apprend, pour chaque categorie, la distribution de l'age, du sexe, du niveau scolaire et de
+     13 symptomes binaires : P(variables | categorie), avec lissage vers la frequence globale
+     (alpha, age_shrink_k) pour que les petites categories (TOC, Personnalite : n ~ 15) ne donnent
+     pas de probabilites 0 % / 100 %.
+  3. describe(categorie) restitue le profil type : valeurs les plus probables / moyennes.
 
-Approche retenue : modele generatif de type "Naive Bayes" (les variables
-sont modelisees independamment, conditionnellement a la classe) :
-    - age            -> loi normale (moyenne/ecart-type par classe)
-    - sexe / scolarite -> loi categorielle empirique (lissage de Laplace)
-    - symptomes      -> loi de Bernoulli par symptome (lissage de Laplace)
-
-Ce choix est volontairement simple et interpretable : avec ~250 patients
-au total et des classes desequilibrees (Psychotique n=10, Bipolaire n=23,
-Anxio-Depressif n=102), un modele plus complexe (GAN, VAE...) surapprendrait
-et produirait des profils peu fiables. Le lissage vers la moyenne/frequence
-globale (parametre alpha / age_shrink_k) evite que les classes a faible
-effectif (surtout Psychotique) ne generent des profils instables ou des
-probabilites de 0%/100% artificielles.
-
-AVERTISSEMENT : avec seulement 10 patients "Psychotique" dans les donnees,
-les profils generes pour cette classe doivent etre interpretes avec beaucoup
-de prudence (grande incertitude statistique).
+Il n'y a PLUS de generation de patients aleatoires (retiree) : seul le profil type est produit.
+La classification (variables -> categorie + explication) est dans patient_classifier.py ; la
+comparaison des modeles est dans model_comparison.py.
 
 Usage (depuis DataAnalyseProject/src) :
-    python profiling_model.py --categorie Psychotique --n 3
-    python profiling_model.py --categorie Bipolaire --mode describe
-    python profiling_model.py --categorie "Anxio-Depressif" --n 5 --seed 42
+    python profiling_model.py --categorie "Troubles Bipolaires"
 """
 
 import argparse
@@ -68,28 +49,14 @@ SYMPTOM_COLS = [
     "syndrome_phobique", "troubles_cognitifs",
 ]
 
-DIAG_MAP = {
-    "Schizophrénie": "Psychotique",
-    "Trouble Schizo-Affectif": "Psychotique",
-    "Trouble Psychotique Aigu Et Transitoire": "Psychotique",
-    "Trouble Bipolaire Type I": "Bipolaire",
-    "Trouble Bipolaire Type Ii": "Bipolaire",
-    "Cyclothymie": "Bipolaire",
-    "Trouble Dépressif Caractérisé": "Anxio-Dépressif",
-    "Trouble Dépressif Récurrent": "Anxio-Dépressif",
-    "Trouble Dépressif Persistant": "Anxio-Dépressif",
-    "Trouble Anxieux Généralisé": "Anxio-Dépressif",
-    "Trouble Panique": "Anxio-Dépressif",
-    "Phobie Sociale": "Anxio-Dépressif",
-    "Trouble Obsessionnel-Compulsif (Toc)": "Anxio-Dépressif",
-    "État De Stress Post-Traumatique (Tspt)": "Anxio-Dépressif",
-    "Trouble De L'Adaptation": "Anxio-Dépressif",
-}
+# Mapping des diagnostics : SOURCE UNIQUE dans diagnostic_mapping.py (regles de priorite,
+# listes de diagnostics, audit). profiling_model.py utilise le mapping a 7 categories.
+from diagnostic_mapping import (  # noqa: E402,F401
+    ADAPTATION, ANXIETE, BIPOLAIRE, DEPRESSION, DIAG_MAP, DIAG_ORDER, PERSONNALITE, PSYCHOTIQUE,
+    TOC_LIST, map_eda as map_diagnostic_category,
+)
 
 
-# ------------------------------------------------------------
-# Modele
-# ------------------------------------------------------------
 class DiagnosticProfileModel:
     """Modele generatif Naive-Bayes conditionne sur la categorie diagnostique."""
 
@@ -158,30 +125,6 @@ class DiagnosticProfileModel:
             raise ValueError(
                 f"Categorie inconnue '{category}'. Categories disponibles : {self.classes_}"
             )
-
-    def sample(self, category: str, n: int = 1, seed: int = None) -> pd.DataFrame:
-        """Genere n profils patients synthetiques pour la categorie donnee."""
-        self._check_category(category)
-        rng = np.random.default_rng(seed)
-        stats = self.class_stats_[category]
-        rows = []
-        for _ in range(n):
-            row = {"diag_cat": category}
-            for col in NUMERIC_COLS:
-                s = stats[col]
-                val = rng.normal(s["mean"], s["std"])
-                row[col] = max(0, round(val))
-            for col in CATEGORICAL_COLS:
-                probs = stats[col]
-                cats = list(probs.keys())
-                p = np.array(list(probs.values()))
-                p = p / p.sum()
-                row[col] = rng.choice(cats, p=p)
-            for col in SYMPTOM_COLS:
-                row[col] = "Oui" if rng.random() < stats[col] else "Non"
-            rows.append(row)
-        cols_order = ["diag_cat"] + NUMERIC_COLS + CATEGORICAL_COLS + SYMPTOM_COLS
-        return pd.DataFrame(rows)[cols_order]
 
     def describe(self, category: str) -> str:
         """Retourne une description textuelle du profil 'typique' de la categorie
@@ -260,7 +203,7 @@ def load_and_prepare_data() -> pd.DataFrame:
             f"Fichier {DATA_PATH} introuvable. Lancez d'abord preprocessing.py."
         )
     df = pd.read_csv(DATA_PATH, encoding="utf-8")
-    df["diag_cat"] = df["diagnostic_principal"].map(DIAG_MAP).fillna("Autre")
+    df["diag_cat"] = df["diagnostic_principal"].apply(map_diagnostic_category)
     return df
 
 
@@ -274,25 +217,11 @@ def train_model() -> DiagnosticProfileModel:
 # CLI
 # ------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Modele generatif de profils patients par categorie diagnostique.")
-    parser.add_argument("--categorie", required=True, choices=["Psychotique", "Bipolaire", "Anxio-Dépressif"],
-                         help="Categorie diagnostique cible.")
-    parser.add_argument("--mode", choices=["generate", "describe"], default="generate",
-                         help="'generate' = tire des profils synthetiques aleatoires ; "
-                              "'describe' = decrit le profil type (valeurs moyennes/majoritaires).")
-    parser.add_argument("--n", type=int, default=1, help="Nombre de profils a generer (mode 'generate').")
-    parser.add_argument("--seed", type=int, default=None, help="Graine aleatoire pour reproductibilite.")
+    valid_categories = [c for c in DIAG_ORDER if c != "Autre"]
+    parser = argparse.ArgumentParser(description="Profil type (valeurs les plus probables) d'une categorie diagnostique.")
+    parser.add_argument("--categorie", required=True, choices=valid_categories, help="Categorie diagnostique.")
     args = parser.parse_args()
-
-    model = train_model()
-
-    if args.mode == "describe":
-        print(model.describe(args.categorie))
-    else:
-        profiles = model.sample(args.categorie, n=args.n, seed=args.seed)
-        pd.set_option("display.max_columns", None)
-        pd.set_option("display.width", 160)
-        print(profiles.to_string(index=False))
+    print(train_model().describe(args.categorie))
 
 
 if __name__ == "__main__":
