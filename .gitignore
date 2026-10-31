@@ -5,6 +5,7 @@ data/raw/
 data/cleaned/
 data/processed/
 *.csv
+src/validation_report.txt
 
 
 # Trained model artifacts (derived from patient data)
